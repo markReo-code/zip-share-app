@@ -9,13 +9,20 @@
 		"lint": "next lint",
 		"deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
 		"preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
-		"cf-typegen": "wrangler types --env-interface CloudflareEnv ./cloudflare-env.d.ts"
+		"cf-typegen": "wrangler types --env-interface CloudflareBindings ./cloudflare-env.d.ts",
+		"db:generate": "npx drizzle-kit generate",
+		"db:push": "npx drizzle-kit migrate"
 	},
 	"dependencies": {
-		"@opennextjs/cloudflare": "^1.6.2",
+		"@opennextjs/cloudflare": "^1.5.0",
+		"cloudflare": "^4.5.0",
+		"dotenv": "^17.2.1",
+		"drizzle-orm": "^0.44.4",
+		"hono": "^4.8.10",
 		"next": "15.3.5",
 		"react": "^19.0.0",
-		"react-dom": "^19.0.0"
+		"react-dom": "^19.0.0",
+		"react-dropzone": "^14.3.8"
 	},
 	"devDependencies": {
 		"@eslint/eslintrc": "^3",
@@ -23,6 +30,7 @@
 		"@types/node": "^20.19.9",
 		"@types/react": "^19",
 		"@types/react-dom": "^19",
+		"drizzle-kit": "^0.31.4",
 		"eslint": "^9",
 		"eslint-config-next": "15.3.5",
 		"tailwindcss": "^4",

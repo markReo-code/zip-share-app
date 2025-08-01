@@ -1,0 +1,13 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1753859004163,
+      "tag": "0000_loving_edwin_jarvis",
+      "breakpoints": true
+    }
+  ]
+}
