@@ -7,6 +7,7 @@ import { handle } from "hono/vercel";
 
 const app = new Hono().basePath("/api");
 
+// D1から全件のメタ情報一覧を返す
 app.get("/files", async (c) => {
   const { env } = getCloudflareContext();
   const db = drizzle((env as unknown as CloudflareBindings).DB);
@@ -14,7 +15,7 @@ app.get("/files", async (c) => {
   return c.json(fileResponse);
 });
 
-// 追加１
+//  file/expiration を受け取り、R2保存 → D1メタ保存 → 共有URL返却
 app.post("/upload", async (c) => {
   const { env } = getCloudflareContext();
   const formData = await c.req.formData();
@@ -26,14 +27,23 @@ app.post("/upload", async (c) => {
   }
 
   const file = fileData as File;
-  const fileName = file.name;
+  const fileName = file.name.endsWith(".zip") ? "zip-share-app.zip" : file.name;
   const filePath = `upload/${Date.now()}-${fileName}`;
+
+   // 有効期限の計算
   const expiresAt = new Date();
   expiresAt.setDate(expiresAt.getDate() + Number(expirationDays));
 
   try {
     const r2 = (env as unknown as CloudflareBindings).R2;
-    await r2.put(filePath, file);
+
+    // ZIPなら application/zip、その他は元のMIMEを付与
+    const contentType = file.name.endsWith(".zip") ? "application/zip" : file.type;
+
+    await r2.put(filePath, file, {
+      httpMetadata: { contentType }
+    });
+
   } catch (r2Error) {
     return c.json(
       { success: false, message: `File upload failed: ${r2Error}` },
@@ -41,14 +51,15 @@ app.post("/upload", async (c) => {
     );
   }
 
+   // レコードを作る部分（保存はしていない。この段階では）
   const db = drizzle((env as unknown as CloudflareBindings).DB);
-
-  // レコードを作る部分（保存はしていない。この段階では）　start
+ 
   try {
     await db.insert(files).values({
       fileName,
       filePath,
-      contentType: file.type,
+      contentType: file.name.endsWith(".zip") ? "application/zip" : file.type || "application/octet-stream",
+
       expiresAt: expiresAt.toISOString(),
     });
   } catch (error) {
@@ -58,8 +69,8 @@ app.post("/upload", async (c) => {
       500
     );
   }
-  // レコードを作る部分　end
 
+  // 最新のレコードを取得してURLを返す
   const insertRecord = await db
     .select()
     .from(files)
@@ -74,7 +85,7 @@ app.post("/upload", async (c) => {
   });
 });
 
-// 追加２
+// 指定IDのメタ情報のみを返す（期限判定なし）
 app.get("/files/:id", async (c) => {
   const id = c.req.param("id");
   const { env } = getCloudflareContext();
@@ -84,7 +95,7 @@ app.get("/files/:id", async (c) => {
   return c.json(file[0]);
 });
 
-// 追加３
+// 期限チェック後、R2から取得してダウンロードで返す
 app.get("/download/:id", async (c) => {
   try {
     const id = c.req.param("id");
@@ -100,13 +111,12 @@ app.get("/download/:id", async (c) => {
 
     const fileInfo = fileResult[0];
 
-    // 有効期限が切れていたら
     if (new Date() > new Date(fileInfo.expiresAt)) {
         return c.json({ error: "ファイルの有効期限が切れました。"}, 403);
     }
 
-    const r2 = (env as unknown as CloudflareBindings).R2; //R2にアクセスし
-    const file = await r2.get(fileInfo.filePath); //R2からファイルのデータを取ってくる。保存先のファイルパスを設定してあげる
+    const r2 = (env as unknown as CloudflareBindings).R2; 
+    const file = await r2.get(fileInfo.filePath); 
 
     if (file === null) {
         return c.json({ error: "ストレージにファイルが見つかりませんでした"}, 400);
@@ -127,9 +137,7 @@ app.get("/download/:id", async (c) => {
 
   } catch {
     return c.json({ error: "ファイルダウンロード中にエラーが発生しました"}, 500);
-
   }
-
 });
 
 export const GET = handle(app);
