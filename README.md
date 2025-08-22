@@ -9,6 +9,16 @@ Next.js（App Router）+ Hono を Cloudflare Workers 上で動かすサーバー
 
 **URL**：https://zip-share-app.mark-reo.workers.dev/
 
+## アプリケーションのイメージ
+
+| トップ画面 | ファイル追加画面 |
+|:--:|:--:|
+| ![トップ画面](./public/screenshot-upload-empty.png) | ![ファイル追加](./public/screenshot-upload-selected.png) |
+
+| URL発行画面 | ダウンロードページ |
+|:--:|:--:|
+| ![URL発行](./public/screenshot-upload-complete.png) | ![ダウンロードページ](./public/screenshot-download-page.png) |
+
 ## 開発背景
 
 フロントエンドからエッジ実行環境まで一気通貫で設計・実装できる力を示すため、日常でよく使う「一時的なファイル共有」を題材にしました。  
@@ -50,7 +60,6 @@ Wrangler を用いたローカル〜デプロイの流れ、R2 / D1 のバイン
   - 有効期限チェックや `Content-Type` の制御を行い、安全なレスポンスを提供
 
 - **API 構築（Hono + Cloudflare Workers）**
-  - `app/api/[[...route]]/route.ts` による柔軟なルーティングとAPI構成
   - `POST /api/upload`：アップロード＋メタ保存＋URL 返却
   - `GET /api/files/:id`：メタ情報取得
   - `GET /api/download/:id`：期限チェック後にファイル配信
@@ -62,7 +71,6 @@ Wrangler を用いたローカル〜デプロイの流れ、R2 / D1 のバイン
   - React の list key は配列 index ではなく UUID を採用（並べ替え・削除時の再利用バグ回避）
 - **アクセシビリティ対応**
   - セマンティック HTML、ラベルの関連付け、WAI-ARIA 配慮などを実装
-
 
 ## 主なディレクトリ構成
 
@@ -131,8 +139,8 @@ npx wrangler d1 create zip-share-app
 # R2 バケット
 npx wrangler r2 bucket create zip-share-app
 ```
-↑ で出力された database_id を、wrangler.jsonc の該当箇所へ貼り付けます。  
-bucket_name は「作成した名前」と一致していれば OK（ID の貼り付けは不要）
+↑ で出力された `database_id` を、`wrangler.jsonc` の該当箇所へ貼り付けます。  
+`bucket_name` は「作成した名前」と一致していれば OK（ID の貼り付けは不要）
 
 ```jsonc
 // wrangler.jsonc（抜粋）
@@ -198,7 +206,7 @@ BASE_URL=http://127.0.0.1:8787
 ```
 
 ※.env.example はテンプレートとしてリポジトリに含めています。  
-/.gitignore により .env と .env*.local はコミット対象外です。
+.gitignore により `.env` と `.env*.local` はコミット対象外です。
 
 #### 5. DB 反映（Drizzle → D1）
 ```bash
@@ -250,7 +258,7 @@ WSL2（Ubuntu）上での実行を推奨します。ネイティブ Windows だ�
 既知の不具合回避としてツールのバージョンを下げる対応は基本非推奨です。まずは WSL2 を利用する構成をご検討ください。  
 macOS 環境がある場合は、**macOS での構築・検証を推奨**します。
 
-## スクリーンショット
+
 
 ## 使い方（利用者向け）
 
@@ -264,7 +272,7 @@ macOS 環境がある場合は、**macOS での構築・検証を推奨**しま�
 
 期限切れファイルの自動削除（Cron Triggers）を実装しようと考えています。  
 D1 の `expiresAt` を基準に Cloudflare Workers の Cron を定期実行し、R2 のオブジェクト削除 → 対応する D1 レコードのクリーンアップを自動化します。  
-R2 の Lifecycle ルールは「アップロードからの経過日数」基準のため、 **可変 TTL（1/3/5/7日）** に正確に対応できる本方式を採用します。
+R2 の Lifecycle ルールは「アップロードからの経過日数」基準のため、 **可変 TTL（1/3/5/7日）** に正確に対応できる本方式を採用予定です。
 
 ## ライセンス
 このプロジェクトは MIT License のもとで公開されています。
