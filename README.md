@@ -23,7 +23,7 @@ Wrangler を用いたローカル〜デプロイの流れ、R2 / D1 のバイン
 - データベース：Cloudflare D1 + Drizzle ORM
 - ストレージ：Cloudflare R2（オブジェクトストレージ）
 - API：Hono（Cloudflare Workers）
-- アップロード・圧縮：react-dropzone（選択・ドラッグ＆ドロップ）、JSZip（複数ファイルの ZIP 化）
+- アップロード、圧縮：react-dropzone（選択・ドラッグ＆ドロップ）、JSZip（複数ファイルの ZIP 化）
 - アクセシビリティ：セマンティック HTML / WAI-ARIA
 - デザイン：Figma
 
@@ -59,9 +59,7 @@ Wrangler を用いたローカル〜デプロイの流れ、R2 / D1 のバイン
   - 型安全な schema 定義と migration に対応
 
 - **フロント側のファイル追加のリスト描画**
-  - React の key は 配列 index ではなく uuid を採用（並べ替え・削除での再利用バグ回避）
-
-
+  - React の list key は配列 index ではなく UUID を採用（並べ替え・削除時の再利用バグ回避）
 - **アクセシビリティ対応**
   - セマンティック HTML、ラベルの関連付け、WAI-ARIA 配慮などを実装
 
@@ -87,7 +85,8 @@ Wrangler を用いたローカル〜デプロイの流れ、R2 / D1 のバイン
 │       └── [ランダムな識別子].sql   # 自動生成されるマイグレーションファイル名（例: 0000_xxx.sql）
 ├── public/
 │   └── ...                         # 静的アセット（faviconなど）
-├── .env                            # 環境変数（ローカル用）
+├── .env                            # 環境変数（ローカル用・コミット対象外）
+├── .env.example                    # 環境変数テンプレート（コミット対象）
 ├── .gitignore
 ├── cloudflare-env.d.ts             # Cloudflare 用の型定義（env, DB, R2）
 ├── drizzle.config.ts               # Drizzle設定ファイル
@@ -107,7 +106,7 @@ Next.js の App Router 構成に加え、Cloudflare Workers（D1 / R2）によ�
 前提
 - Node.js v20 以上
 - Cloudflare アカウントの作成（R2ではクレカ登録が必要）
-- Wrangler のインストール（`npm install -g wrangler` **または** `npm install -D wrangler`）
+- Wrangler のインストール（`npm install -g wrangler` または `npm install -D wrangler`）
 
 #### 1.  取得 & 依存関係
 ```bash
@@ -121,16 +120,70 @@ npx wrangler login
 ```
 
 #### 3.  リソース作成（D1 / R2）
+
+**A. このリポジトリの既定名で作る（推奨）**  
+wrangler.jsonc の既定と揃うので、そのまま動きます。
+
 ```bash
-# D1 データベース（名前は例）
+# D1 データベース
 npx wrangler d1 create zip-share-app
 
-# R2 バケット（名前は例）
+# R2 バケット
 npx wrangler r2 bucket create zip-share-app
 ```
-↑ で表示された database_id やバケット名は、後述の wrangler.jsonc に貼ります。
+↑ で出力された database_id を、wrangler.jsonc の該当箇所へ貼り付けます。  
+bucket_name は「作成した名前」と一致していれば OK（ID の貼り付けは不要）
 
+```jsonc
+// wrangler.jsonc（抜粋）
+{
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "zip-share-app",
+      "database_id": "<ここに wrangler の出力 database_id を貼る>"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "R2",
+      "bucket_name": "zip-share-app"
+    }
+  ]
+}
+```
+**B. 別名で作る場合**  
+任意のプロジェクト名で作ってもOKですが、**wrangler.jsonc** の **database_name / bucket_name** を**同じ名前に揃えてください。**
+
+```bash
+npx wrangler d1 create your-project
+npx wrangler r2 bucket create your-bucket
+```
+
+```jsonc
+// wrangler.jsonc（抜粋・別名に揃える）
+{
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "your-project",
+      "database_id": "<create の出力 database_id>"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "R2",
+      "bucket_name": "your-bucket"
+    }
+  ]
+}
+
+```
 #### 4.  環境変数 .env を作成
+
+以下を参考にするか、プロジェクト直下の .env.example をコピーして .env を作成してください。 
+
+
 ```env
 # Cloudflare Account 
 CLOUDFLARE_ACCOUNT_ID=xxxxxxxxxxxxxxxxx
@@ -144,69 +197,32 @@ CLOUDFLARE_D1_TOKEN=xxxxxxxxxxxxxxxxx
 BASE_URL=http://127.0.0.1:8787
 ```
 
-#### 5 DB 反映（Drizzle → D1）
+※.env.example はテンプレートとしてリポジトリに含めています。  
+/.gitignore により .env と .env*.local はコミット対象外です。
+
+#### 5. DB 反映（Drizzle → D1）
 ```bash
 npm run db:push
 ```
 
-#### 6 プレビュー起動（Workers 経路で本番同等に動作）
+#### 6. プレビュー起動（Workers 経路で本番同等に動作）
 ```bash
 npm run preview
 ```
 
-メモ：UI の動作確認だけ触るなら npm run dev でもOK。R2/D1 を伴うアップロードは preview 推奨です。  
+メモ：UI の動作確認だけなら npm run dev でもOK。R2/D1 を伴うアップロードは preview 推奨です。  
 
-#### 7 デプロイ（任意）
+#### 7. デプロイ（任意）
 ```
 npm run deploy
 ```
 
-<details> <summary><strong>Cloudflare 設定の詳細（必要な人だけ）</strong></summary>
-<br>
-wrangler.jsonc のバインディング
-
-npx wrangler d1 create ... の結果に出た database_id を、
-wrangler.jsonc の d1_databases に貼ります。（R2 も同様）。
-
-```jsonc
-{
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "zip-share-app",
-  "main": ".open-next/worker.js",
-  "compatibility_date": "2025-03-01",
-  "compatibility_flags": ["nodejs_compat","global_fetch_strictly_public"],
-
-  "assets": { 
-      "binding": "ASSETS", 
-      "directory": ".open-next/assets" 
-  },
-
-  "observability": {
-      "enabled": true
-	},
-
-  "d1_databases": [
-    {
-      "binding": "DB",
-      "database_name": "zip-share-app",
-      "database_id": "<ここに D1 の database_id>"
-    }
-  ],
-
-  "r2_buckets": [
-    {
-      "binding": "R2",
-      "bucket_name": "zip-share-app"
-    }
-  ]
-}
-```
-</details>
-
 <br>
 
-<details> <summary><strong>（オプション）このリポジトリを使わず最小構成で試す</strong></summary>
-<br>
+<details> <summary><strong>このリポジトリを使わず最小構成で試す（オプション）</strong></summary>
+
+このリポジトリをクローンせずに、「OpenNext × Cloudflare」の構成で、ゼロから動作・構築をしたい方向けです。
+
 
 1. Wrangler ログイン
  ```bash
@@ -226,9 +242,6 @@ npm i
 ```bash
 npm run preview
 ```
-
-<br>
-このリポをクローンせずに、「OpenNext × Cloudflare」の最小テンプレから動作を確かめたい方向けです。
 </details>
 
 ## 補足事項 （Windows でOpenNextを使う場合）
@@ -250,8 +263,8 @@ macOS 環境がある場合は、**macOS での構築・検証を推奨**しま�
 ## 今後の改善
 
 期限切れファイルの自動削除（Cron Triggers）を実装しようと考えています。  
-D1 の expiresAt を基準に Cloudflare Workers の Cron を定期実行し、R2 のオブジェクト削除 → 対応する D1 レコードのクリーンアップを自動化します。  
-R2 の Lifecycle ルールは「アップロードからの経過日数」基準のため、**可変 TTL（1/3/5/7日）**に正確に対応できる本方式を採用予定です。
+D1 の `expiresAt` を基準に Cloudflare Workers の Cron を定期実行し、R2 のオブジェクト削除 → 対応する D1 レコードのクリーンアップを自動化します。  
+R2 の Lifecycle ルールは「アップロードからの経過日数」基準のため、 **可変 TTL（1/3/5/7日）** に正確に対応できる本方式を採用します。
 
 ## ライセンス
 このプロジェクトは MIT License のもとで公開されています。
