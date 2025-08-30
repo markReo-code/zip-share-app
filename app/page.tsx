@@ -1,43 +1,78 @@
 "use client";
 
 import JSZip from "jszip";
+import type { UploadResult, ExpirationOption, FileRow } from "@/types/upload";
 import { useCallback, useState } from "react";
 import { useDropzone } from "react-dropzone";
-import { DocumentCheckIcon } from "@heroicons/react/24/outline";
-import {
-  PaperClipIcon,
-  ArrowUpTrayIcon,
-  ArrowPathIcon,
-} from "@heroicons/react/24/outline";
+import { MAX_UPLOAD_BYTES } from "@/lib/constants";
+import { formatSize } from "@/lib/formatBytes";
+import ErrorAlert from "./components/ErrorAlert";
+import UploadResultCard from "./components/UploadResultCard";
+import FileList from "./components/FileList";
+import UploadActions from "./components/UploadActions";
+import DropArea from "./components/DropArea";
 
-type UploadResult = {
-  success: boolean;
-  message?: string;
-  url?: string;
-  expiresAt?: string;
-};
-
-type ExpirationOption = 1 | 3 | 5 | 7;
-
-type FileRow = {id: string, file: File }
-
+const MAX_UPLOAD_LABEL = formatSize(MAX_UPLOAD_BYTES);
 
 export default function Home() {
+  //状態管理
   const [files, setFiles] = useState<FileRow[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
   const [expiration, setExpiration] = useState<ExpirationOption>(7);
-  const [copyStatus, setCopyStatus] = useState<"idle" | "copied">("idle");
+  const [notice, setNotice] = useState<string | null>(null);
+
+  // 合計サイズ　（変わるたびに再計算）
+  const totalBytes = files.reduce((accu, { file }) => accu + file.size, 0);
+  const over = totalBytes > MAX_UPLOAD_BYTES;
+
+  // エラー中とアップロード中は不可
+  const canAddFiles = !uploading && !over && !notice;
+  // 送信できるか
+  const canUploadFiles = files.length > 0 && canAddFiles;
+
+  const handleCloseAlert = () => {
+    setNotice(null);
+    // 失敗の uploadResult だけクリア（成功カードは残す）
+    setUploadResult(prev => (prev && !prev.success ? null : prev));
+  };
+
+  const errorMessage: string | null = notice ?? (uploadResult?.success === false ? (uploadResult.message ?? null) : null)
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     if (acceptedFiles.length === 0) return;
-    setFiles((prev) => [
-      ...prev,
-      ...acceptedFiles.map((acceptedFile) => ({
-        id: crypto.randomUUID(),
-        file: acceptedFile
-      })),
-    ]);
+
+    setFiles((prev) => {
+      // すでに選択済みの合計バイト
+      const prevTotalBytes = prev.reduce(
+        (accu, curr) => accu + curr.file.size,
+        0
+      ); 
+
+      // 今回追加分の合計バイト
+      const addedTotalBytes = acceptedFiles.reduce(
+        (accu, file) => accu + file.size,
+        0
+      );
+
+      // 追加後の合計
+      const nextTotalBytes = prevTotalBytes + addedTotalBytes;
+
+      if (nextTotalBytes > MAX_UPLOAD_BYTES) {
+        setNotice(`合計サイズが上限(${MAX_UPLOAD_LABEL})を超えます。追加できませんでした。`);
+        return prev; 
+      }
+
+      setNotice(null);
+
+      return [
+        ...prev,
+        ...acceptedFiles.map((acceptedFile) => ({
+          id: crypto.randomUUID(),
+          file: acceptedFile,
+        })),
+      ];
+    });
   }, []);
 
   const handleUpload = async () => {
@@ -53,7 +88,7 @@ export default function Home() {
       } else {
         // 複数 → ZIP化
         const zip = new JSZip();
-        files.forEach(({file}) => {
+        files.forEach(({ file }) => {
           zip.file(file.name, file);
         });
         const zipBlob = await zip.generateAsync({ type: "blob" });
@@ -79,7 +114,7 @@ export default function Home() {
       setUploadResult(result);
 
       if (result.success) {
-        setFiles([]); // 全クリア
+        setFiles([]); 
       }
     } catch (error) {
       setUploadResult({
@@ -94,13 +129,38 @@ export default function Home() {
     }
   };
 
+  const handleRemove = useCallback((id: string) => {
+     setFiles((prev) => {
+      const nextFiles = prev.filter((item) => item.id !== id);
+      const nextTotalBytes = nextFiles.reduce((accu, curr) => accu + curr.file.size, 0);
+      if (nextTotalBytes <= MAX_UPLOAD_BYTES) setNotice(null);
+      return nextFiles;
+    })
+  }, []);
+
   const { getRootProps, getInputProps, isDragActive, open } = useDropzone({
     onDrop,
-    // noClick: true
+    multiple: true,
+    maxSize: MAX_UPLOAD_BYTES,
+    disabled: !canAddFiles,
+    onDropRejected: (rejections) => {
+      // ファイル超過したファイル名だけを集める
+      const tooLarge = rejections
+        .filter((rej) =>
+          rej.errors.some((err) => err.code === "file-too-large")
+        )
+        .map((rej) => rej.file.name);
+
+      // 1件でもあれば通知
+      if (tooLarge.length) {
+        setNotice(`上限（${MAX_UPLOAD_LABEL}）を超えたファイル: ${tooLarge.join(", ")}`);
+      }
+    },
   });
 
   return (
     <div className="container mx-auto max-w-3xl px-5 pt-12 pb-12">
+     
       <div className="mb-8 sm:mb-12">
         <h1 className="text-2xl font-bold text-center">
           登録不要で、
@@ -108,158 +168,47 @@ export default function Home() {
           すぐにファイルを共有。
         </h1>
         <p className="text-sm sm:text-base font-semibold text-center mt-[12px]">
-          最大1GBまでアップロード可能。
+          最大500MBまでアップロード可能。
           <br className="block sm:hidden" />
-          選べる有効期限で安全に送信できます。
+          無料・有効期限つきで安全に送信できます。
         </p>
       </div>
 
-      {/* --- Dropzone --- */}
+      {/* --- ドロップゾーン --- */}
       {!uploadResult && (
-        <div
-          {...getRootProps()}
-          className={`border-2 border-dashed rounded-lg p-8 mb-4 text-center cursor-pointer transition-colors ${
-            isDragActive
-              ? "border-blue-500 bg-blue-500 text-white"
-              : "border-gray-300 hover:border-gray-400 text-gray-600"
-          }`}
-        >
-          <input {...getInputProps({id: "file-input"})}/>
-          <label htmlFor="file-input" className="flex flex-col items-center justify-center h-32">
-            <span className="">ここにファイルをドラッグ＆ドロップ<br />またはクリック、タップで追加</span>
-          </label>
-        </div>
+         <DropArea getRootProps={getRootProps} getInputProps={getInputProps} isDragActive={isDragActive} canAddFiles={canAddFiles}/>
       )}
-      
+
+      {/* --- エラー時のUI --- */}
+      {errorMessage && (
+        <ErrorAlert message={errorMessage} onClose={handleCloseAlert} />
+      )}
+
       {/* --- ファイルリスト + アップロードボタン --- */}
       {!uploadResult && files.length > 0 && (
         <div className="">
-          <p className=" text-gray-dark font-semibold pb-4 border-b border-gray-light">
-            {files.length}ファイル
-          </p>
-          <div className="mt-3">
-            <ul className="mb-4">
-              {files.map(({ id, file}) => (
-                <li
-                  key={id}
-                  className="flex justify-between items-center text-sm text-gray-dark px-3 py-3"
-                >
-                  <div className="flex items-center gap-x-2 flex-1 min-w-0">
-                    <DocumentCheckIcon className="w-5 h-5 text-gray-500 flex-shrink-0" />
-                    <span className="xs:max-w-[80%] truncate">{file.name}</span>
-                  </div>
+          <FileList
+            files={files}
+            totalBytesLabel={formatSize(totalBytes)}
+            maxLabel={MAX_UPLOAD_LABEL}
+            onRemove={handleRemove}
+          />
 
-                  <button
-                    onClick={() =>
-                      setFiles((prev) => prev.filter((item) => item.id !== id))
-                    }
-                    className="text-sm text-gray-dark border-b border-gray-dark leading-none cursor-pointer "
-                    type="button"
-                  >
-                    削除
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          <div className="flex justify-between items-center py-6 mb-12 border-t border-b border-gray-light">
-            <label htmlFor="expires" className="text-sm sm:text-base text-gray-dark">
-              ファイルの有効期限
-            </label>
-
-            <select
-              id="expires"
-              value={expiration}
-              onChange={(e) =>
-                setExpiration(Number(e.target.value) as ExpirationOption)
-              }
-              className="w-[156px] text-gray-dark border border-gray-light rounded px-4 py-2.5 text-sm appearance-none bg-[url('/arrow.svg')] bg-no-repeat bg-[position:calc(100%-14px)_center] bg-[length:14px_14px]"
-            >
-              <option value={1}>1日</option>
-              <option value={3}>3日</option>
-              <option value={5}>5日</option>
-              <option value={7}>7日</option>
-            </select>
-          </div>
-
-          <div className="flex flex-col gap-3 ms:flex-row ms:justify-between">
-            <button
-              onClick={open}
-              className="inline-flex items-center justify-center gap-2 text-base leading-6 font-medium text-blue-500 hover:bg-blue-100 py-2.5 px-4 text-center border border-blue-500 rounded-md cursor-pointer"
-              type="button"
-            >
-              <PaperClipIcon className="w-5 h-5" />
-              <span className="text-sm sm:text-base">ファイルの追加</span>
-            </button>
-            <button
-              onClick={handleUpload}
-              disabled={uploading}
-              className="inline-flex items-center justify-center gap-2 bg-blue-500 text-base leading-6 font-medium text-white py-2.5 px-4 text-center rounded-md hover:bg-blue-700 cursor-pointer"
-              type="button"
-            >
-              {uploading ? (
-                <>
-                  <ArrowPathIcon className="w-5 h-5 animate-spin" />
-                  <span className="text-sm sm:text-base">
-                    アップロード中...
-                  </span>
-                </>
-              ) : (
-                <>
-                  <ArrowUpTrayIcon className="w-5 h-5" />
-                  <span className="text-sm sm:text-base">アップロード</span>
-                </>
-              )}
-            </button>
-          </div>
+          <UploadActions 
+            onUpload={handleUpload} 
+            onPickFiles={open}
+            onChangeExpiration={setExpiration}
+            expiration={expiration} 
+            canAddFiles={canAddFiles} 
+            canUploadFiles={canUploadFiles}
+            uploading={uploading}
+          />
         </div>
       )}
 
       {/* --- アップロード結果（共有URL） --- */}
       {uploadResult && uploadResult.success && uploadResult.url && (
-        <div className="border border-[#dee2e6] rounded-lg pt-5 px-5 pb-7 sm:pb-10">
-          <h3 className="sm:text-xl xs:text-[18px] font-medium pb-4 border-b border-[#dee2e6]">
-            ファイルを転送しました。
-          </h3>
-
-          <p className="text-sm leading-relaxed my-6 sm:my-10">
-            ダウンロードページにアクセスするか、ダウンロードリンクをコピーしてください。
-            <br />
-            あなたのファイルは{expiration}日間有効です。
-          </p>
-          <h3 className="text-sm font-medium mb-2">共有URL:</h3>
-
-          <div className="w-full flex gap-4 flex-col sm:flex-row">
-            <input
-              type="text"
-              readOnly
-              value={uploadResult.url}
-              onClick={(e) => (e.target as HTMLInputElement).select()}
-              className="flex-[3] border border-gray-light px-5 py-3.5 text-sm rounded-sm"
-            />
-
-            <button
-              onClick={() => {
-                navigator.clipboard.writeText(uploadResult.url!);
-                setCopyStatus("copied");
-                setTimeout(() => setCopyStatus("idle"), 2000);
-              }}
-              className={`flex-[1] max-w-[170px] ${
-                copyStatus === "copied" ? "bg-[#2ecc71]" : "bg-blue-500"
-              } text-white text-sm px-5 py-3.5 rounded transition duration-300`}
-              type="button"
-            >
-              {copyStatus === "copied" ? "コピーしました" : "コピー"}
-            </button>
-          </div>
-
-          {uploadResult.expiresAt && (
-            <p className="mt-3 text-sm">
-              有効期限: {new Date(uploadResult.expiresAt).toLocaleString()}
-            </p>
-          )}
-        </div>
+        <UploadResultCard expiration={expiration} uploadResult={uploadResult} />
       )}
     </div>
   );

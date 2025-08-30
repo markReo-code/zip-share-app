@@ -1,0 +1,1 @@
+export const MAX_UPLOAD_BYTES = 500 * 1024 ** 2; // 500MB

@@ -1,8 +1,8 @@
-# zip-share-app
+# Zip Share
 
 ## 概要
 
-zip-share-app は、複数ファイルをアップロード・自動でZIP圧縮し、期限付きダウンロードリンクを生成するファイル共有アプリです。  
+Zip Share は、複数ファイルをアップロード・自動でZIP圧縮し、期限付きダウンロードリンクを生成するファイル共有アプリです。  
 クライアント側で ZIP 化 → Cloudflare R2 に保存し、メタ情報と有効期限を D1 に記録します。  
 Next.js（App Router）+ Hono を Cloudflare Workers 上で動かすサーバーレス構成で、高速かつシンプルな共有体験を実現しています。  
 会員登録不要で利用できます。
@@ -47,6 +47,13 @@ Wrangler を用いたローカル〜デプロイの流れ、R2 / D1 のバイン
   - 2 件以上の選択時はクライアント側で **JSZip** により ZIP 化
   - ワーカーのメモリ負荷を軽減し、アップロード回数を最小化
 
+- **ファイルサイズ上限＆超過ガード（単一 / 合計）**
+  - 上限は `MAX_UPLOAD_BYTES`（`/lib/constants.ts`）で一元管理（※現在はテスト用 **5MB**、本番想定 **1GB**）
+  - `react-dropzone` の `maxSize` により、上限を超える単一ファイルは追加されず、エラー通知（ファイル名を表示）
+  - ファイル合計サイズも事前チェックし、超過した場合は追加せず `ErrorAlert` で通知
+  - 上限超過時や送信中は選択・送信を自動で無効化（`canAddFiles` / `canUploadFiles`）
+  - 容量表記は `formatSize()`（`/lib/formatBytes.ts`）で B/KB/MB/GB に統一
+
 - **有効期限付き共有リンク生成**
   - 1日 / 3日 / 5日 / 7日から選択可能
   - DB に有効期限を記録し、期限切れアクセスは自動でブロック
@@ -69,6 +76,7 @@ Wrangler を用いたローカル〜デプロイの流れ、R2 / D1 のバイン
 
 - **フロント側のファイル追加のリスト描画**
   - React の list key は配列 index ではなく UUID を採用（並べ替え・削除時の再利用バグ回避）
+  
 - **アクセシビリティ対応**
   - セマンティック HTML、ラベルの関連付け、WAI-ARIA 配慮などを実装
 
@@ -76,9 +84,15 @@ Wrangler を用いたローカル〜デプロイの流れ、R2 / D1 のバイン
 
 ```
 ├── app/
-│   ├── global.css                
-│   ├── layout.tsx                
-│   ├── page.tsx                    # アップロード画面（メインのフロント画面）
+│   ├── global.css
+│   ├── layout.tsx
+│   ├── page.tsx                   # アップロード画面（メインのフロント画面）
+│   ├── components/
+│   │   ├── DropArea.tsx           # ドラッグアンドドロップ（ またはクリック ）領域
+│   │   ├── ErrorAlert.tsx         # エラー表示UI
+│   │   ├── FileList.tsx           # 選択ファイル一覧・合計表示
+│   │   ├── UploadActions.tsx      # 期限選択・アップロード等の操作
+│   │   └── UploadResultCard.tsx   # アップロード成功時の共有URL発行
 │   ├── api/
 │   │   └── [[...route]]/
 │   │       └── route.ts            # Hono + Drizzle + Cloudflare Workers による API 定義
@@ -87,12 +101,17 @@ Wrangler を用いたローカル〜デプロイの流れ、R2 / D1 のバイン
 │       └── client.tsx              # クライアント側のダウンロード処理
 ├── db/
 │   └── schema.ts                   # Drizzle ORM のスキーマ定義（filesテーブル）
+├── public/
+│   └── ...                         # 静的アセット（faviconなど）
+├── types/
+│   └── upload.ts                   # 型定義（ UploadResult / ExpirationOption / FileRow ）
+├── lib/
+│   ├── constants.ts                # 上限などの定数（例: MAX_UPLOAD_BYTES）
+│   └── formatBytes.ts              # 容量表記のフォーマッタ（B/KB/MB/GB）
 ├── drizzle/
 │   └── migrations/                 # Drizzleによるマイグレーションファイル
 │       ├── meta/
-│       └── [ランダムな識別子].sql   # 自動生成されるマイグレーションファイル名（例: 0000_xxx.sql）
-├── public/
-│   └── ...                         # 静的アセット（faviconなど）
+│       └── [ランダムな識別子].sql   # 自動生成（例: 0000_xxx.sql）
 ├── .env                            # 環境変数（ローカル用・コミット対象外）
 ├── .env.example                    # 環境変数テンプレート（コミット対象）
 ├── .gitignore
@@ -104,7 +123,7 @@ Wrangler を用いたローカル〜デプロイの流れ、R2 / D1 のバイン
 ├── postcss.config.mjs
 ├── tailwind.config.ts
 ├── tsconfig.json
-└── wrangler.jsonc                  # Cloudflare Workers 専用設定（D1, R2 を含む） ※Pages未使用
+└── wrangler.jsonc                  # Cloudflare Workers 専用設定（D1, R2 を含む）※Pages未使用
 ```
 
 Next.js の App Router 構成に加え、Cloudflare Workers（D1 / R2）によるサーバーレス API 処理と、Drizzle ORM による型安全なデータ操作を組み合わせています。
@@ -120,7 +139,7 @@ Next.js の App Router 構成に加え、Cloudflare Workers（D1 / R2）によ�
 ```bash
 git clone <このリポジトリURL>
 cd zip-share-app
-npm i
+npm install
 ```
 #### 2.  Cloudflare ログイン
 ```bash
@@ -242,7 +261,7 @@ npm run deploy
 ```bash
 npm create cloudflare@latest -- my-next-app --framework=next
 cd my-next-app
-npm i
+npm install
 ```
 
 3.  OpenNext を採用（本リポと同様のビルド／プレビュー）
@@ -276,3 +295,5 @@ R2 の Lifecycle ルールは「アップロードからの経過日数」基準
 
 ## ライセンス
 このプロジェクトは MIT License のもとで公開されています。
+
+

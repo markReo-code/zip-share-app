@@ -4,6 +4,8 @@ import { desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { Hono } from "hono";
 import { handle } from "hono/vercel";
+import { MAX_UPLOAD_BYTES } from "@/lib/constants";
+import { formatSize } from "@/lib/formatBytes";
 
 const app = new Hono().basePath("/api");
 
@@ -15,9 +17,33 @@ app.get("/files", async (c) => {
   return c.json(fileResponse);
 });
 
-//  file/expiration を受け取り、R2保存 → D1メタ保存 → 共有URL返却
+// file/expiration を受け取り、R2保存 → D1メタ保存 → 共有URL返却
 app.post("/upload", async (c) => {
   const { env } = getCloudflareContext();
+
+  // ---- サーバ側の上限　----
+  const LIMIT_BYTES = MAX_UPLOAD_BYTES;
+  const LIMIT_LABEL = formatSize(LIMIT_BYTES, 0);
+
+  // ---- 早期チェック（ヘッダが載っていれば）----
+  const cl = c.req.header("content-length");
+
+  if (cl) {
+    const payloadBytes = Number(cl);
+    // マルチパートの境界ぶんに少しマージン
+    const MULTIPART_OVERHEAD = 512 * 1024;
+    if (
+      Number.isFinite(payloadBytes) && 
+      payloadBytes > 0 &&
+      payloadBytes > LIMIT_BYTES + MULTIPART_OVERHEAD
+    ) {
+      return c.json(
+        { success: false, message: `アップロードサイズ上限（${LIMIT_LABEL}）を超えています。`},
+        413
+      );
+    }
+  }
+
   const formData = await c.req.formData();
   const fileData = formData.get("file");
   const expirationDays = formData.get("expiration");
@@ -27,6 +53,15 @@ app.post("/upload", async (c) => {
   }
 
   const file = fileData as File;
+
+  // ---- 最終チェック（実サイズ）----
+  if (file.size > LIMIT_BYTES) {
+     return c.json(
+        { success: false, message: `アップロードサイズ上限（${LIMIT_LABEL}）を超えています。`},
+        413
+      );
+  }
+
   const fileName = file.name.endsWith(".zip") ? "zip-share-app.zip" : file.name;
   const filePath = `upload/${Date.now()}-${fileName}`;
 
@@ -51,7 +86,7 @@ app.post("/upload", async (c) => {
     );
   }
 
-   // レコードを作る部分（保存はしていない。この段階では）
+   // レコード作成
   const db = drizzle((env as unknown as CloudflareBindings).DB);
  
   try {
