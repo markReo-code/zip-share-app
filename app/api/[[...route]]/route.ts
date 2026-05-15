@@ -1,6 +1,6 @@
 import { files } from "@/db/schema";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
-import { desc, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { Hono } from "hono";
 import { handle } from "hono/vercel";
@@ -33,13 +33,16 @@ app.post("/upload", async (c) => {
     // マルチパートの境界ぶんに少しマージン
     const MULTIPART_OVERHEAD = 512 * 1024;
     if (
-      Number.isFinite(payloadBytes) && 
+      Number.isFinite(payloadBytes) &&
       payloadBytes > 0 &&
       payloadBytes > LIMIT_BYTES + MULTIPART_OVERHEAD
     ) {
       return c.json(
-        { success: false, message: `アップロードサイズ上限（${LIMIT_LABEL}）を超えています。`},
-        413
+        {
+          success: false,
+          message: `アップロードサイズ上限（${LIMIT_LABEL}）を超えています。`,
+        },
+        413,
       );
     }
   }
@@ -56,16 +59,19 @@ app.post("/upload", async (c) => {
 
   // ---- 最終チェック（実サイズ）----
   if (file.size > LIMIT_BYTES) {
-     return c.json(
-        { success: false, message: `アップロードサイズ上限（${LIMIT_LABEL}）を超えています。`},
-        413
-      );
+    return c.json(
+      {
+        success: false,
+        message: `アップロードサイズ上限（${LIMIT_LABEL}）を超えています。`,
+      },
+      413,
+    );
   }
 
   const fileName = file.name.endsWith(".zip") ? "zip-share-app.zip" : file.name;
   const filePath = `upload/${Date.now()}-${fileName}`;
 
-   // 有効期限の計算
+  // 有効期限の計算
   const expiresAt = new Date();
   expiresAt.setDate(expiresAt.getDate() + Number(expirationDays));
 
@@ -73,49 +79,53 @@ app.post("/upload", async (c) => {
     const r2 = (env as unknown as CloudflareBindings).R2;
 
     // ZIPなら application/zip、その他は元のMIMEを付与
-    const contentType = file.name.endsWith(".zip") ? "application/zip" : file.type;
+    const contentType = file.name.endsWith(".zip")
+      ? "application/zip"
+      : file.type;
 
     await r2.put(filePath, file, {
-      httpMetadata: { contentType }
+      httpMetadata: { contentType },
     });
-
   } catch (r2Error) {
     return c.json(
       { success: false, message: `File upload failed: ${r2Error}` },
-      500
+      500,
     );
   }
 
-   // レコード作成
+  // レコード作成
   const db = drizzle((env as unknown as CloudflareBindings).DB);
- 
-  try {
-    await db.insert(files).values({
-      fileName,
-      filePath,
-      contentType: file.name.endsWith(".zip") ? "application/zip" : file.type || "application/octet-stream",
 
-      expiresAt: expiresAt.toISOString(),
-    });
+  let insertedFiles: { id: string }[];
+
+  try {
+    insertedFiles = await db
+      .insert(files)
+      .values({
+        fileName,
+        filePath,
+        contentType: file.name.endsWith(".zip")
+          ? "application/zip"
+          : file.type || "application/octet-stream",
+
+        expiresAt: expiresAt.toISOString(),
+      })
+      .returning({ id: files.id });
   } catch (error) {
     console.error("DB Insert Error:", error);
     return c.json(
       { success: false, message: "ファイルの保存に失敗しました" },
-      500
+      500,
     );
   }
 
-  // 最新のレコードを取得してURLを返す
-  const insertRecord = await db
-    .select()
-    .from(files)
-    .orderBy(desc(files.createdAt))
-    .limit(1);
+  // 現在のリクエストURLから、ドメイン部分だけを取り出す
+  const origin = new URL(c.req.url).origin;
 
   return c.json({
     success: true,
     message: "ファイルを保存しました",
-    url: `${process.env.BASE_URL}/files/${insertRecord[0].id}`,
+    url: `${origin}/files/${insertedFiles[0].id}`,
     expiresAt: expiresAt.toISOString(),
   });
 });
@@ -138,40 +148,49 @@ app.get("/download/:id", async (c) => {
     const db = drizzle((env as unknown as CloudflareBindings).DB);
 
     // データベースから最新のデータを１件取得する
-    const fileResult = await db.select().from(files).where(eq(files.id, id)).limit(1);
+    const fileResult = await db
+      .select()
+      .from(files)
+      .where(eq(files.id, id))
+      .limit(1);
 
     if (fileResult.length === 0) {
-        return c.json({error: "ファイルが見つかりませんでした。"},404);
+      return c.json({ error: "ファイルが見つかりませんでした。" }, 404);
     }
 
     const fileInfo = fileResult[0];
 
     if (new Date() > new Date(fileInfo.expiresAt)) {
-        return c.json({ error: "ファイルの有効期限が切れました。"}, 403);
+      return c.json({ error: "ファイルの有効期限が切れました。" }, 403);
     }
 
-    const r2 = (env as unknown as CloudflareBindings).R2; 
-    const file = await r2.get(fileInfo.filePath); 
+    const r2 = (env as unknown as CloudflareBindings).R2;
+    const file = await r2.get(fileInfo.filePath);
 
     if (file === null) {
-        return c.json({ error: "ストレージにファイルが見つかりませんでした"}, 400);
+      return c.json(
+        { error: "ストレージにファイルが見つかりませんでした" },
+        400,
+      );
     }
 
     // ダウンロードのロジック
     const arrayBuffer = await file.arrayBuffer();
     c.header(
-        "Content-Disposition",
-        `attachment; fileName=${fileInfo.fileName}`
-    )
+      "Content-Disposition",
+      `attachment; fileName=${fileInfo.fileName}`,
+    );
     c.header(
-        "Content-Type",
-        fileInfo.contentType || "application/octet-stream"
-    )
+      "Content-Type",
+      fileInfo.contentType || "application/octet-stream",
+    );
     c.header("Content-Length", String(arrayBuffer.byteLength));
     return c.body(arrayBuffer);
-
   } catch {
-    return c.json({ error: "ファイルダウンロード中にエラーが発生しました"}, 500);
+    return c.json(
+      { error: "ファイルダウンロード中にエラーが発生しました" },
+      500,
+    );
   }
 });
 
